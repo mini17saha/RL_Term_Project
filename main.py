@@ -1,3 +1,19 @@
+""" 
+    Group Number: 3
+    Roll Numbers: Yash Sirvi 21CS10083
+                  Adyan Rizvi 21MA10006
+                  Sreejita Saha 21CS30052
+                  Soumojit Bhattacharya 21EC10071
+                  Allen Emmanuel Binny 21EC30067
+                  Anurag Sharma 24AI91R01
+                  
+    Project Number: 3
+    Project Title:  Learning Safe Flight Manoeuvres for a Mini-Drone
+    
+"""
+
+
+
 import gym
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize

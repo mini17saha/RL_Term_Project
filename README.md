@@ -47,7 +47,7 @@ A custom implementation of a physical environment to train a Crazyflie drone usi
 Run the script without arguments to start training a new PPO model:
 
 ```bash
-python train_crazyflie.py
+python main.py
 ```
 
 ### Resume Training from a Saved Model
@@ -55,7 +55,7 @@ python train_crazyflie.py
 To resume training from a previously saved model:
 
 ```bash
-python train_crazyflie.py <path_to_model>
+python main.py <path_to_model>
 ```
 
 ### Emergency Stop
