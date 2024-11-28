@@ -19,6 +19,8 @@ from cflib.crazyflie.log import LogConfig
 from cflib.crazyflie.syncLogger import SyncLogger
 import logging
 from gym import spaces
+from stable_baselines3.common.buffers import ReplayBuffer
+import pickle
 
 
 class CrazyflieEnv(gym.Env):
@@ -26,7 +28,6 @@ class CrazyflieEnv(gym.Env):
         super(CrazyflieEnv, self).__init__()
         
         # Setup logging and initialize Crazyflie drivers
-        # logging.basicConfig(level=logging.ERROR)
         crtp.init_drivers(enable_debug_driver=False)
 
         # Connect to Crazyflie
@@ -36,10 +37,7 @@ class CrazyflieEnv(gym.Env):
         self._setup_logging()
         
         # Define action and observation spaces
-        self.action_space = spaces.Box(low=np.array([-1, -1, -1, -1]),
-                                       high=np.array([1, 1, 1, 1]),
-                                       dtype=np.float32)
-        # self.action_space = spaces.MultiDiscrete([10, 10, 10, 9])
+        self.action_space = spaces.MultiDiscrete([10, 10, 10, 9])
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(9,), dtype=np.float32)
 
         # Environment state variables
@@ -47,7 +45,6 @@ class CrazyflieEnv(gym.Env):
         self.target_position = np.array([0, 0, 0.4], dtype = np.float64)
         self.max_steps = 1024
         self.current_step = 0
-        # self.init_state = None
 
     def _setup_logging(self):
         """Set up logging for the Crazyflie to retrieve state data."""
@@ -58,9 +55,6 @@ class CrazyflieEnv(gym.Env):
         self.log_conf.add_variable("stabilizer.roll", "float")
         self.log_conf.add_variable("stabilizer.pitch", "float")
         self.log_conf.add_variable("stabilizer.yaw", "float")
-        # self.log_conf.add_variable("stateEstimate.vx", "float")
-        # self.log_conf.add_variable("stateEstimate.vy", "float")
-        # self.log_conf.add_variable("stateEstimate.vz", "float")
 
         
         self.scf.cf.log.add_config(self.log_conf)
@@ -70,20 +64,15 @@ class CrazyflieEnv(gym.Env):
     def _log_callback(self, timestamp, data, log_conf):
         """Callback function to update state from Crazyflie logs."""
         # Update state with data from Crazyflie logs (example placeholders)
-        # print('state updated')
         self.state[:3] = [data.get("stateEstimate.x", 0), data.get("stateEstimate.y", 0), data.get("stateEstimate.z", 0)]
-        # print(data.get("stateEstimate.z", 0))
-        # self.state[3:6] = [data.get("stateEstimate.vx", 0), data.get("stateEstimate.vy", 0), data.get("stateEstimate.vz", 0)]
         self.state[6:9] = [data.get("stabilizer.roll", 0), data.get("stabilizer.pitch", 0), data.get("stabilizer.yaw", 0)]
-        # print(data)
 
     def _send_control_command(self, thrust, roll, pitch, yaw):
         """Convert action parameters and send control commands to Crazyflie."""
         self.scf.cf.commander.send_setpoint(0, 0, 0, 0)
-        # print(f"{thrust},{roll},{pitch},{yaw}")
         
-        roll = int(-45 + (roll * 10))
-        pitch = int(-45 + (pitch * 10))
+        roll = int(-9 + (roll * 2))
+        pitch = int(-9 + (pitch * 2))
         self.scf.cf.commander.send_setpoint(roll, pitch, 0, thrust)
         time.sleep(0.01)
 
@@ -95,6 +84,30 @@ class CrazyflieEnv(gym.Env):
         """Close the Crazyflie connection and stop logging."""
         self.log_conf.stop()
         self.scf.close_link()
+
+class PhysicalRobotCallback(BaseCallback):
+    def __init__(self, check_freq, save_path, verbose=1):
+        super(PhysicalRobotCallback, self).__init__(verbose)
+        self.check_freq = check_freq
+        self.save_path = save_path
+        self.best_mean_reward = -np.inf
+
+    def _on_step(self):
+        # Save model and replay buffer periodically
+        if self.n_calls % self.check_freq == 0:
+            model_path = os.path.join(self.save_path, f'model_steps_{self.n_calls}')
+            self.model.save(model_path)
+            if self.verbose > 0:
+                print(f"Saving model checkpoint to {model_path}")
+            
+            # Save the replay buffer to disk
+            replay_buffer_path = os.path.join(self.save_path, 'replay_buffer.pkl')
+            with open(replay_buffer_path, 'wb') as f:
+                pickle.dump(self.model.replay_buffer, f)
+            if self.verbose > 0:
+                print(f"Saving replay buffer to {replay_buffer_path}")
+
+        return True
 
 class PhysicalCrazyflieEnvWrapper(CrazyflieEnv):
     def __init__(self, *args, **kwargs):
@@ -132,19 +145,13 @@ class PhysicalCrazyflieEnvWrapper(CrazyflieEnv):
     def _calculate_reward(self):
         current_pos = self.state[:3]
         target_pos = self.target_position
-        # print(current_pos - self.target_position)
-
-        # print(current_pos[2])
-        # distance = np.linalg.norm(current_pos - target_pos)
         position_reward = 0
         delx = abs(current_pos[0] - target_pos[0])
         dely = abs(current_pos[1] - target_pos[1])
         delz = abs(current_pos[2] - target_pos[2])
         position_reward -= (delz*20 + 5*delx + 5*dely)
-        # if(delx>=0.1) :
-        #     position_reward -= 5*delx
-        # if(dely>=0.1) :
-        #     position_reward -= 5*dely
+        attitude = self.state[6:8]
+        attitude_penalty = 0
         if delz > 0.2 :
             position_reward -= 20*delz
         if delx > 0.2:
@@ -152,7 +159,7 @@ class PhysicalCrazyflieEnvWrapper(CrazyflieEnv):
         if dely > 0.2:
             position_reward -= 30*dely
         if delx<0.1 and dely<0.1 and delz<0.1:
-            position_reward += 35
+            position_reward += 25
         if delz == 0 :
             position_reward += 75
 
@@ -163,12 +170,11 @@ class PhysicalCrazyflieEnvWrapper(CrazyflieEnv):
         velocities = self.state[3:6]
         velocity_penalty = -1.0 * np.linalg.norm(velocities)
         
-        attitude = self.state[6:8]
-        attitude_penalty = 0
+        
+        
         for angle in attitude:
             if angle > 60 or angle < -60: #make this 30 ig
-                attitude_penalty = -10
-        # attitude_penalty = -0.5 * (np.abs(attitude[0]) + np.abs(attitude[1]))
+                attitude_penalty -= 20
 
         self.cum_reward[3] += attitude_penalty
         
@@ -188,8 +194,6 @@ class PhysicalCrazyflieEnvWrapper(CrazyflieEnv):
             abs(delz) >1.25):
             safety_bonus = -20
 
-        # if episode_count < 10 and thrust < 0.5:
-        #     position_reward += -10
         
         total_reward = (
             position_reward +
@@ -249,29 +253,13 @@ class PhysicalCrazyflieEnvWrapper(CrazyflieEnv):
         
         # Increment step counter
         self.step_count += 1
-        
-        # Clip actions for safety
-        # print(action)
-        # action = np.clip(action, self.action_space.low, self.action_space.high)
-        
-        
+    
         # Send commands to drone
         thrust, roll, pitch, yaw = action
         n=1
-        # if(self.step_count<=20) :
-        #     thrust_value = int(20000 + (thrust* 5000))
-        # else :
-        #     thrust_value = int(10000 + (thrust* 5000))
-        # thrust_value = int(20000*np.exp(-0.001*self.step_count) + (thrust* 5000))
         thrust_value = int(15000*np.exp(-0.001*self.step_count)+(thrust* 5000))
-        
         thrust_value = min(65000, thrust_value)
-        # if self.step_count<=15 : 
-        #     thrust = 55000
-        #     self.prev_thrust = thrust
-        # else :
-        #     thrust=self.prev_thrust - 35
-        #     self.prev_thrust = thrust
+
         self._send_control_command( thrust_value, roll/n, pitch/n, yaw/n)
         
         # Update state
@@ -293,8 +281,6 @@ class PhysicalCrazyflieEnvWrapper(CrazyflieEnv):
             "state": self.state,
             "action": action
         }
-        # print(reward)
-        # self.cum_reward += reward
         return self.state, reward, done, info
 
     def _is_done(self):
@@ -323,6 +309,13 @@ def train_ppo_physical(total_timesteps=50000, save_dir='./cache/ppo_physical_cra
     env = PhysicalCrazyflieEnvWrapper()
     env = DummyVecEnv([lambda: env])
     
+    # Initialize callback
+    callback = PhysicalRobotCallback(
+        check_freq=1000,  # Save every 1000 steps
+        save_path=save_dir,
+        verbose=1
+    )
+    
     # Initialize PPO with conservative hyperparameters
     model = PPO(
         "MlpPolicy",
@@ -339,83 +332,92 @@ def train_ppo_physical(total_timesteps=50000, save_dir='./cache/ppo_physical_cra
         tensorboard_log=save_dir
     )
 
-    # print("TRAINED")
-    save_dir='./cache/ppo_physical_crazyflie'
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    save_dir = f"{save_dir}"
-    os.makedirs(save_dir, exist_ok=True)
-    checkpoint_callback = CheckpointCallback(save_freq=16, save_replay_buffer=True, save_path=save_dir)
     try:
         print("\nStarting training. Press Ctrl+C for emergency stop.")
         print("Ensure the physical space is clear and the drone is in the starting position.")
         input("Press Enter to begin...")
-        
+
         # Train the model
         model.learn(
             total_timesteps=total_timesteps,
-            callback= checkpoint_callback,
+            callback=callback,
             tb_log_name="ppo_physical"
         )
         
-        # Save final model
+        # Save final model and replay buffer
         model.save(f"{save_dir}/final_model")
-        loaded_model = PPO.load(f"{save_dir}/final_model")
-        loaded_model.save_replay_buffer("hover_replay_buffer")
+        with open(f"{save_dir}/replay_buffer.pkl", 'wb') as f:
+            pickle.dump(model.replay_buffer, f)
+        print(f"Replay buffer saved to {save_dir}/replay_buffer.pkl")
         
     except KeyboardInterrupt:
         print("\nTraining interrupted! Saving model...")
         model.save(f"{save_dir}/interrupted_model")
-        env.get_attr('force_stop')[0]()
-    
+        with open(f"{save_dir}/replay_buffer.pkl", 'wb') as f:
+            pickle.dump(model.replay_buffer, f)
+
     return model, env
 
-def resume_training(model_path, env, total_timesteps=50000, load_replay=False):
+
+def resume_training_with_replay_buffer(model_path, env, replay_buffer_path=None, total_timesteps=50000):
     """
-    Resume training from a saved model
+    Resume training from a saved model and replay buffer
     """
+    # Load the model
     model = PPO.load(model_path, env=env)
-    # if load_replay:
-    #     model.load_replay_buffer("hover_replay_buffer")
-    # return train_ppo_physical(total_timesteps=timesteps, 
-    #                         save_dir=os.path.dirname(model_path))
 
-    save_dir='./cache/ppo_physical_crazyflie'
+    if replay_buffer_path:
+        # Load the replay buffer
+        with open(replay_buffer_path, 'rb') as f:
+            replay_buffer = pickle.load(f)
+            model.replay_buffer = replay_buffer
+            print(f"Loaded replay buffer from {replay_buffer_path}")
+    
+    # Now you can resume training with the loaded buffer
+    save_dir = './cache/ppo_physical_crazyflie'
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
     save_dir = f"{save_dir}"
     os.makedirs(save_dir, exist_ok=True)
     checkpoint_callback = CheckpointCallback(save_freq=16, save_replay_buffer=True, save_path=save_dir)
+
     try:
         print("\nStarting training. Press Ctrl+C for emergency stop.")
         print("Ensure the physical space is clear and the drone is in the starting position.")
         input("Press Enter to begin...")
-        
+
         # Train the model
         model.learn(
             total_timesteps=total_timesteps,
-            callback= checkpoint_callback,
+            callback=checkpoint_callback,
             tb_log_name="ppo_physical"
         )
         
-        # Save final model
+        # Save final model and replay buffer
         model.save(f"{save_dir}/final_model")
-        model.save_replay_buffer("hover_replay_buffer")
-        
+        with open(f"{save_dir}/replay_buffer.pkl", 'wb') as f:
+            pickle.dump(model.replay_buffer, f)
+
     except KeyboardInterrupt:
         print("\nTraining interrupted! Saving model...")
         model.save(f"{save_dir}/interrupted_model")
-        env.get_attr('force_stop')[0]()
-    
+        with open(f"{save_dir}/replay_buffer.pkl", 'wb') as f:
+            pickle.dump(model.replay_buffer, f)
+
     return model, env
+
 
 if __name__ == "__main__":
     # Check for saved model to resume training
     latest_model = None
     if len(sys.argv) > 1:
         latest_model = sys.argv[1]
+        replay_buffer_path = None
+        if len(sys.argv) > 2:
+            replay_buffer_path = sys.argv[2]
         print(f"Resuming training from {latest_model}")
         env = PhysicalCrazyflieEnvWrapper()
         env = DummyVecEnv([lambda: env])
-        model, env = resume_training(latest_model, env, load_replay=True)
+        model, env = resume_training_with_replay_buffer(latest_model, env, replay_buffer_path=replay_buffer_path)
 
     else:
         print("Starting new training session")
