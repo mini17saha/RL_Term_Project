@@ -118,4 +118,8 @@ Run the training script
 ```bash	
 python train.py
 ```
+To Evaluate the best model
 
+```bash
+python eval.py --model_path ./results/save-11.28.2024_18.44.31/best_model.zip
+```
