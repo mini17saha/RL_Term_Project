@@ -1,4 +1,4 @@
-# Training CrazyFile 2.1 micro drone using PPO
+# Training CrazyFlie 2.1 micro drone using PPO
 
 A custom implementation of a physical environment to train a Crazyflie drone using PPO. The script is designed for use with the [Crazyflie 2.X micro drone](https://www.bitcraze.io/crazyflie-2-1/) and employs the `PPO` algorithm from the `Stable-Baselines3` library for training.
 
@@ -109,7 +109,7 @@ Default parameters used for PPO training:
 
 ## Sanity Check with simulator
 
-We used the `gym-pybullet-drone` package which simulates CrazyFile micro drone for testing our reward structures and learning algorithm for hover. We got good results on it after ~1000 episodes.
+We used the `gym-pybullet-drone` package which simulates CrazyFlie micro drone for testing our reward structures and learning algorithm for hover. We got good results on it after ~1000 episodes.
 
 Find the code for that in `pybullet-sim` folder
 
