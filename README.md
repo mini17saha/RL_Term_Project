@@ -55,7 +55,7 @@ python main.py
 To resume training from a previously saved model:
 
 ```bash
-python main.py <path_to_model>
+python main.py ./model/final_model.zip
 ```
 
 ### Emergency Stop
